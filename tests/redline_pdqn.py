@@ -25,11 +25,11 @@ class EnvBuilder:
         return testenv
 
 pdqn = ModelPredictivePDQN( EnvBuilder() ,
-                            num_episodes=2000,
+                            num_episodes=500,
                             num_actions=7,
-                            pnn_epochs=30,
-                            dqn_epochs=1000,
-                            reward_multiplier=1,
+                            pnn_epochs=600,
+                            dqn_epochs=2000,
+                            reward_multiplier=0.2,
                             buffer_samples=500)
 
-pdqn.run()
+pdqn.run( episode_length=10 )

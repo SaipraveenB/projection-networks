@@ -3,8 +3,8 @@ import numpy as np
 
 from environments.d2.line import Line
 
-SCREEN_WIDTH = 1500
-SCREEN_HEIGHT = 1500
+SCREEN_WIDTH = 1000
+SCREEN_HEIGHT = 1000
 
 TS_SCALE = 50
 TS_MOVE = np.asarray((SCREEN_WIDTH/2,SCREEN_HEIGHT/2))
@@ -39,11 +39,11 @@ class PyGame2D:
     def update(self):
         pygame.display.update()
 
-    def draw_path_cmp(self, env, path, path_pred, attns):
+    def draw_path_cmp(self, env, path, path_pred, attns, rewards):
 
         clock = pygame.time.Clock()
 
-        for p,pred,attn in zip(path,path_pred,attns):
+        for p,pred,attn,rews in zip(path,path_pred,attns,rewards):
             # Two frames per second.
             clock.tick(1)
 
@@ -84,14 +84,15 @@ class PyGame2D:
                                  1)
                 visYtemp = visYt + 0.01 * SCREEN_HEIGHT
 
-                for atmod in impix[4]:
+                """for atmod in impix[4]:
                     visYtemp = visYtemp + 0.01 * SCREEN_HEIGHT
                     pygame.draw.rect(self.screen, _tc((atmod,atmod,atmod,1.0)),
                                  (impix[1], visYtemp, SCREEN_WIDTH / W, SCREEN_WIDTH / W))
                     pygame.draw.rect(self.screen, (255, 255, 255),
                                  (impix[1], visYtemp, SCREEN_WIDTH / W, SCREEN_WIDTH / W),
                                  1)
-
+                """
+            pygame.draw.rect(self.screen, _tc((rews[0],rews[0],rews[0],1.0)), ( 0,visYt + 0.02 * SCREEN_HEIGHT, SCREEN_WIDTH, SCREEN_WIDTH / W))
 
             pygame.display.update()
 

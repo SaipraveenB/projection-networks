@@ -11,7 +11,7 @@ from theano.compat.python2x import OrderedDict
 from theano.compile.nanguardmode import NanGuardMode
 from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
 from theano.tensor.signal.downsample import max_pool_2d
-from theano.tensor.nnet import conv2d, softmax
+from theano.tensor.nnet import conv2d, softmax, relu, softplus
 import tarfile
 import tempfile
 import gzip
@@ -24,7 +24,7 @@ from scipy.misc import imsave, imread
 import os
 from sklearn.base import BaseEstimator, TransformerMixin
 from scipy.linalg import svd
-from skimage.transform import resize
+#from skimage.transform import resize
 
 from agents.pathsampler import Recorder
 from environments.visualisers.pg2dvis import PyGame2D
@@ -98,6 +98,19 @@ def iter_data(*data, **kwargs):
     size = kwargs.get('size', 128)
     batches = len(data[0]) / size
     if len(data[0]) % size != 0:
+        batches += 1
+    for b in range(batches):
+        start = b * size
+        end = (b + 1) * size
+        if len(data) == 1:
+            yield data[0][start:end]
+        else:
+            yield tuple([d[start:end] for d in data])
+
+def iter_data_tv(*data, **kwargs):
+    size = kwargs.get('size', 128)
+    batches = data[0].shape[0].eval() / size
+    if data[0].shape[0].eval() % size != 0:
         batches += 1
     for b in range(batches):
         start = b * size
@@ -569,22 +582,32 @@ class MPEDQN(PickleMixin):
         # Target network variables.
 
         #NxS
-        S = T.matrix()
+        S = sharedX( np.zeros((1,1)), name="S")
         #NxA
-        A = T.matrix()
+        A = sharedX( np.zeros((1,1)), name="A")
         #N
-        R = T.vector()
+        R = sharedX( np.zeros((1,)), name="R")
         #NxS
-        S_prime = T.matrix()
+        S_prime = sharedX( np.zeros((1,1)), name="S_")
 
+        # Control variable
+        # 1
+        k = sharedX( 0, name="k")
+        K = sharedX( 10, name="K")
+
+        #Sv = S[k*]
+        self.inputs = {"S":S,"A":A,"R":R,"S_":S_prime}
         # Q network variables
         # Do we need more complexity here?
-        T_H = sigmoid( T.tensordot( S_prime, w2a, axes=[1,0] ) + w2a_bias )
+        # NxH
+        T_H = relu( T.tensordot( S_prime, w2a, axes=[1,0] ) + w2a_bias )
+        # NxA
         T_Q = T.tensordot( T_H, w2b, axes=[1,0] )
-
+        # N
         T_ = T.max(T_Q, axis=1) * self.gamma + R
 
-        H_ = sigmoid(T.tensordot(S, wa, axes=[1, 0]) + wa_bias)
+        # NxH
+        H_ = relu(T.tensordot(S, wa, axes=[1, 0]) + wa_bias)
         # NxA
         Q_ = T.tensordot(H_, wb, axes=[1,0])
 
@@ -597,42 +620,51 @@ class MPEDQN(PickleMixin):
         # Adaptive Gradient technique 'Adam'
         updates = Adam( self.q_params, cost )
 
-        self._fit_function = theano.function([S, A, R, S_prime], cost, updates=updates)
-        self._sample = theano.function([S], A_sample)
+
+
+        self._fit_function = theano.function([], cost, updates=updates)
+        self._sample = theano.function([], A_sample)
+        self._q = theano.function([], Q_)
         # Output just the cost to check with a test set.
-        self._cost = theano.function([S, A, R, S_prime], cost)
+        self._cost = theano.function([], cost)
 
     def sample(self, trS):
         if not hasattr(self, "_sample"):
             self._setup_functions()
-        trS = floatX(trS)
-        return self._sample(trS)
+        self.inputs["S"].set_value(np.asarray(trS, dtype=np.float32))
+        return self._sample()
+
+    def q(self, trS):
+        if not hasattr(self, "_q"):
+            self._setup_functions()
+        self.inputs["S"].set_value(np.asarray(trS, dtype=np.float32))
+        return self._q()
 
     def fit(self, trS, trA, trR, trS_, epochs=100):
         if not hasattr(self, "_fit_function"):
             self._setup_functions()
 
-        #xs = floatX(np.random.randn(100, self.n_code))
+        self.inputs["S"].set_value(np.asarray(trS, dtype=np.float32))
+        self.inputs["A"].set_value(np.asarray(trA, dtype=np.float32))
+        self.inputs["R"].set_value(np.asarray(trR, dtype=np.float32))
+        self.inputs["S_"].set_value(np.asarray(trS_, dtype=np.float32))
         print('TRAINING DQN')
-        #x_rec = floatX(shuffle(trX)[:100])
         t = time()
         n = 0.
-        #epochs = 10
         for e in range(epochs):
             iter_num = 0;
             tot_cost = 0;
-            for xmS, xmA, xmR, xmS_ in iter_data(trS, trA, trR, trS_):
-                iter_num += 1
-                #xmb = np.asarray(xmb)
+            #for xmS, xmA, xmR, xmS_ in iter_data_tv(trS, trA, trR, trS_):
+            iter_num += 1
+            #    #xmb = np.asarray(xmb)
+            #    #xmA = floatX(xmA)
+            #    #xmS = floatX(xmS)
+            #    #xmR = floatX(xmR)
+            #    #xmS_ = floatX(xmS_)
+            cost = self._fit_function()
+            tot_cost += cost
 
-                xmA = floatX(xmA)
-                xmS = floatX(xmS)
-                xmR = floatX(xmR)
-                xmS_ = floatX(xmS_)
-                cost = self._fit_function( xmS, xmA, xmR, xmS_ )
-                tot_cost += cost
-
-                n += xmA.shape[0]
+            #    n += xmA.shape[0]
 
             self.costs_.append(tot_cost)
 
@@ -676,7 +708,6 @@ class MPEDQN(PickleMixin):
                 if not os.path.exists(samples_path):
                     os.makedirs(samples_path)
 
-
 def cropLast( trA ):
     return trA[:,:-1]
 
@@ -711,6 +742,9 @@ class ModelPredictivePDQN(PickleMixin):
 
         # TxN_xA
         trA = np.zeros((1, self.num_episodes, self.num_actions));
+
+        # TxN_x(A-1)
+        dbgQ = np.zeros((1, self.num_episodes, self.num_actions - 1));
         # One Hot Action: Initialise.
         trA[:,:,6] = 1
         for epno in range(0, episode_length):
@@ -719,6 +753,9 @@ class ModelPredictivePDQN(PickleMixin):
             # One hot action samples.
             # N_x(A-1)
             nA = self.dqn.sample( trS[-1,:,:] )
+            # N_x(A-1)
+            nQ = self.dqn.q( trS[-1,:,:] )
+
             # N_xA
             nA = np.concatenate([nA, np.zeros((nA.shape[0],1))], axis=1)
 
@@ -726,6 +763,7 @@ class ModelPredictivePDQN(PickleMixin):
                 env.action( ac.argmax() )
 
             trA = np.concatenate( [trA,nA.reshape( (1,) + nA.shape)], axis=0 )
+            dbgQ = np.concatenate( [dbgQ, nQ.reshape((1,) + nQ.shape)], axis=0 )
 
         outputss = []
         for env in self.envs:
@@ -759,6 +797,11 @@ class ModelPredictivePDQN(PickleMixin):
 
         # Action Values.
 
+
+
+        # Train the ACPNN on these traces.
+        self.acpnn.fit( train_acs, train_uvs, train_obs, epochs=self.pnn_epochs, qvals=dbgQ.transpose([1,0,2]) )
+
         # TxNxC
         preds = self.acpnn.predict(train_acs, train_uvs)
         # TxNxC
@@ -769,12 +812,10 @@ class ModelPredictivePDQN(PickleMixin):
         actuals = actuals.reshape([actuals.shape[0], N_, W, actuals.shape[2]])
 
         # TxN_xR
-        trR = sigmoid( self.reward_multiplier * np.sum( np.sum( np.square(preds - actuals), axis=3 ), axis=2 ) )
+        trR = np.tanh(self.reward_multiplier * np.sum(np.sum(np.square(preds - actuals), axis=3), axis=2))
         trR = trR.reshape((trR.shape + (1,)))
 
-
-        # Train the ACPNN on these traces.
-        self.acpnn.fit( train_acs, train_uvs, train_obs, epochs=self.pnn_epochs )
+        rewards = trR
 
         # We have TxN_xS state vector now
         trS = self.acpnn.next_state( trA )
@@ -799,15 +840,18 @@ class ModelPredictivePDQN(PickleMixin):
         trA = trA[1:,:,:].reshape(((trA.shape[0]-1)*trA.shape[1], trA.shape[2]))[shuf,:]
         # (N*)x(A-1)
         trA = cropLast( trA )
+        # (N*)x(S-1)
         trS = trS.reshape((trS.shape[0] * trS.shape[1], trS.shape[2]))[shuf,:]
+        # (N*)x(S-1)
         trS_ = trS_.reshape((trS_.shape[0] * trS_.shape[1], trS_.shape[2]))[shuf,:]
+        # (N*)x(S-1)
         trR = trR[1:,:,:].reshape(((trR.shape[0]-1) * trR.shape[1], trR.shape[2]))[shuf,:]
 
         # Train DQN
         self.dqn.fit( trS[:self.buffer_samples], trA[:self.buffer_samples], trR[:self.buffer_samples,0], trS_[:self.buffer_samples], epochs=self.dqn_epochs)
 
         plotter = PyGame2D()
-        plotter.draw_path_cmp(self.envs[0].env, outputss[0], preds.transpose([1,0,2,3])[0], attns.transpose([1,0,2,3])[0] )
+        plotter.draw_path_cmp(self.envs[0].env, outputss[0], preds.transpose([1,0,2,3])[0], attns.transpose([1,0,2,3])[0], rewards.transpose([1,0,2])[0] )
 
 # Action-Conditional Projection Neural Network with Model Predictive Bonus
 class ACPNN(PickleMixin):
@@ -878,12 +922,13 @@ class ACPNN(PickleMixin):
             wn,wt,wl1,wb1,wl2,wmk,wmc = self.params
 
         #TxNxA
-        A = T.tensor3()
+        A = sharedX( np.zeros((2,2,2)),name="A")
         #TxNxP
-        P = T.tensor3()
+        P = sharedX( np.zeros((2,2,2)),name="P")
         #TxNxC
-        y = T.tensor3()
+        y = sharedX( np.zeros((2,2,2)),name="y")
 
+        self.inputs = {"A":A,"P":P,"y":y}
         # Inputs: NxS, NxA
         def state_transform( a_, s_ ):
             # Nx(S+1)xS
@@ -925,37 +970,44 @@ class ACPNN(PickleMixin):
         updates = Adam(self.params, cost)
 
         print('compiling')
-        self._fit_function = theano.function([A, P, y], cost, updates=updates)
-        self._predict = theano.function([A, P], Col)
-        self._next_state = theano.function([A], S)
-        self._predict_attn = theano.function([A, P], Att)
+        self._fit_function = theano.function([], cost, updates=updates)
+
+        theano.printing.debugprint(self._fit_function)
+
+        #self._predict = theano.function([A, P], Col, allow_input_downcast=True)
+        self._predict = theano.function([], Col, allow_input_downcast=True)
+        #self._next_state = theano.function([A], S, allow_input_downcast=True)
+        self._next_state = theano.function([], S, allow_input_downcast=True)
+        #self._predict_attn = theano.function([A, P], Att, allow_input_downcast=True)
+        self._predict_attn = theano.function([], Att, allow_input_downcast=True)
         # Output just the cost to check with a test set.
-        self._cost = theano.function([A,P,y], cost)
+        #self._cost = theano.function([A,P,y], cost, allow_input_downcast=True)
+        self._cost = theano.function([], cost, allow_input_downcast=True)
 
     def next_state(self, trA):
         if not hasattr(self, "_next_state"):
             self._setup_functions()
-        trA = floatX(trA)
-        return self._next_state( trA )
+        self.inputs["A"].set_value(np.asarray(trA, dtype=np.float32))
+        return self._next_state()
 
     def predict(self, trA, trP):
-        trA = floatX(trA)
-        trP = floatX(trP)
-        return self._predict(trA, trP)
+        self.inputs["A"].set_value(np.asarray(trA, dtype=np.float32))
+        self.inputs["P"].set_value(np.asarray(trP, dtype=np.float32))
+        return self._predict()
 
     def verify(self, trA, trP, trY):
-        trA = floatX(trA)
-        trP = floatX(trP)
-        trY = floatX(trY)
-        return self._cost(trA, trP, trY)
+        self.inputs["A"].set_value(np.asarray(trA, dtype=np.float32))
+        self.inputs["P"].set_value(np.asarray(trP, dtype=np.float32))
+        self.inputs["y"].set_value(np.asarray(trY, dtype=np.float32))
+        return self._cost()
 
     def predict_attention(self, trA, trP):
-        trA = floatX(trA)
-        trP = floatX(trP)
-        return self._predict_attn( trA, trP )
+        self.inputs["A"].set_value(np.asarray(trA, dtype=np.float32))
+        self.inputs["P"].set_value(np.asarray(trP, dtype=np.float32))
+        return self._predict_attn()
 
     # Inputs: TxNxA, TxNxP, TxNxC
-    def fit(self, trA, trP, trY, epochs=100):
+    def fit(self, trA, trP, trY, epochs=100, qvals=None):
         if not hasattr(self, "_fit_function"):
             self._setup_functions()
 
@@ -965,20 +1017,20 @@ class ACPNN(PickleMixin):
         t = time()
         n = 0.
         #epochs = 10
+        self.inputs["A"].set_value(np.asarray(trA, dtype=np.float32))
+        self.inputs["P"].set_value(np.asarray(trP, dtype=np.float32))
+        self.inputs["y"].set_value(np.asarray(trY, dtype=np.float32))
+
         for e in range(epochs):
-            iter_num = 0;
-            tot_cost = 0;
-            for xmA, xmP, xmY in iter_data(trA.transpose([1,0,2]), trP.transpose([1,0,2]), trY.transpose([1,0,2]), size=self.n_batch):
-                iter_num += 1
+            iter_num = 0
+            tot_cost = 0
+            #for xmA, xmP, xmY in iter_data_tv(trA.transpose([1,0,2]), trP.transpose([1,0,2]), trY.transpose([1,0,2]), size=self.n_batch):
+            iter_num += 1
                 #xmb = np.asarray(xmb)
+            cost = self._fit_function()
+            tot_cost += cost
 
-                xmA = floatX(xmA.transpose([1,0,2]))
-                xmP = floatX(xmP.transpose([1,0,2]))
-                xmY = floatX(xmY.transpose([1,0,2]))
-                cost = self._fit_function( xmA, xmP, xmY )
-                tot_cost += cost
-
-                n += xmA.shape[0]
+            n += trA.shape[0]
 
             self.costs_.append(tot_cost)
 
@@ -1005,10 +1057,11 @@ class ACPNN(PickleMixin):
             #print(self.params[1].eval())
 
             print("S_final")
-            S = self._next_state( trA )
+            #self.inputs["A"].set_value(np.asarray(trA, dtype=np.float32))
+            S = self._next_state( )
             print(trA[:,-1,:])
+            print(qvals[-1,:,:])
             print(S[:,-1,:])
-
 
             self.epoch_ += 1
 
