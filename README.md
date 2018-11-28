@@ -1,4 +1,4 @@
-# projection-networks
+# Action Conditional Projection Neural Networks
 
 This repository documents the ACPNN (Action-Conditional Projection Neural Network) architecture, which is designed specifically to
 simulate the natural mage formation system. Instead of using standard Convolutional networks, which generally work best for 
