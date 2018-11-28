@@ -24,8 +24,14 @@ The ACPNN operates on UV texture coordinates rather than using convolutional lay
 
 An example synthetic 2D world is shown below (The rendered 1D image is shown below). The black dot and the line represetnt the position and direction of the agent.
 
-<img src="https://github.com/SaipraveenB/projection-networks/blob/master/doubleline-wp.png" width="512">
+<img src="https://github.com/SaipraveenB/projection-networks/blob/master/doubleline_wp.png" width="512">
 
-The steady improvement of the validation and testing error (The tests are based on mean squared error of randomly generated paths)
+The steady improvement of the validation and testing error on the 2D world (The tests are based on mean squared error of randomly generated paths)
 
 <img src="https://github.com/SaipraveenB/projection-networks/blob/master/inpacpnn_wo_conv.jpg" width="512">
+
+For more complex 3D worlds, please see the thesis document.
+
+The full report can be found here as a part of my Bachelor's thesis (Section 6, Partially Observable Spatial Reasoning)
+
+[Thesis PDF](btpthesis.pdf)
